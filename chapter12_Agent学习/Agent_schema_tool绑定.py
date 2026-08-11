@@ -4,10 +4,16 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 
 import os
-# from chapter09_多工具调用.chapter03_多工具调用 import response
-from langchain.chat_models import init_chat_model
+from typing import Literal
+
 from dotenv import load_dotenv
-from typing_extensions import TypedDict, Annotated
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+from rich import print as rprint
+
 
 load_dotenv(override=True)
 
@@ -23,16 +29,13 @@ model_deepseek = init_chat_model(
 )
 
 # 定义工具
-@tool(prase_docstring=True)
+@tool(parse_docstring=True)
 def search_custmer_database(query: str) -> str:
     """
     查询客户数据库
 
     Args:
-        query(str): 查询条件
-    
-    Returns:
-        str: 查询结果
+        query: 查询条件
     """
     # 模拟数据库查询结果
     if "张三" in query.lower():
@@ -43,30 +46,46 @@ def search_custmer_database(query: str) -> str:
     else:
         return "未找到相关客户记录"
     
-@tool(prase_docstring=True)
+@tool(parse_docstring=True)
 def send_email(customer: str) -> str:
     """
+    向指定客户发送邮件
 
     Args:
-        customer(str): 客户名称
-    
-    Returns:
-        str: 发送结果
+        customer: 客户名称
     """
     # 模拟发送邮件结果
     return f"邮件发送成功：{customer}"
 
-# 定义模式
-class CustomerServiceAgent(BaseModel):
-    customer: str = Field(description="客户名称")
+# 定义Pydantic Schema结构化
+class CustomerAnalysis(BaseModel):
+    """客户分析报告"""
+    customer_name: str = Field(description="客户名称")
+    customer_tier: Literal["潜在客户", "VIP客户", "普通客户", "流失客户"] = Field(description="客户类型")
+    recent_activity: str = Field(description="最近活动")
+    spending_level: Literal["低消费", "中消费", "高消费"] = Field(description="消费水平")
+    send_email: bool = Field(False, description="是否发送邮件")
+    
 
 # 创建智能体
 agent = create_agent(
-    model=model,
-    system_prompt=SystemMessage(content="清分析指定客户的情况："
-    "1.先搜索客户数据库了解最新情况"
-    "2.如果是VIP客户，则发送邮件解答"
-    "3.基于搜索结果生成结构化分析报告"
-    "4.如果用户提问与客户记录无关火找不到客户信息，则返回空对象"
-    )
+    model=model_deepseek,
+    system_prompt=SystemMessage(
+        content=(
+            "请分析指定客户的情况："
+            "1.先搜索客户数据库了解最新情况"
+            "2.如果是VIP客户，则发送邮件解答"
+            "3.基于搜索结果生成结构化分析报告"
+            "4.如果用户提问与客户记录无关或找不到客户信息，则返回空对象"
+        )
+    ),
+    tools=[search_custmer_database, send_email],
+    response_format=CustomerAnalysis,
 )
+
+result = agent.invoke({
+    "messages": [
+        {"role": "user", "content": "请分析客户张三的情况"}
+    ]
+})
+rprint(result)
